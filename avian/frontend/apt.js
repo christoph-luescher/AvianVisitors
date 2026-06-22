@@ -832,6 +832,7 @@
     timeseries: null,   // ./avian/api/birdnet-api.php?action=timeseries (daily + hourly aggregates)
     firstseen: null,    // ./avian/api/birdnet-api.php?action=firstseen (newest lifelist additions)
     recent: null,       // ./avian/api/birdnet-api.php?action=recent&hours=N (refetched on picker change)
+    atlasLabels: null,  // ./avian/api/atlas-labels.php (selected Atlas language name maps)
   };
 
   // Derived chart arrays, backfilled so 30 buckets always exist.
@@ -1091,6 +1092,37 @@
     var code = EBIRD_CODES[sci];
     return code ? 'https://ebird.org/species/' + code : 'https://ebird.org/explore';
   }
+  function atlasNameLines(s) {
+    var atlas = DATA.atlasLabels || {};
+    var langs = atlas.languages || [];
+    var labels = atlas.labels || {};
+    if (!langs.length) return [{ text: s.com || s.sci, primary: true }];
+    var lines = [];
+    langs.slice(0, 3).forEach(function (lang, i) {
+      var bySci = labels[lang.code] || {};
+      var name = bySci[s.sci];
+      if (!name && i === 0) name = s.com || s.sci;
+      if (!name || name === s.sci) return;
+      lines.push({ text: name, primary: i === 0 });
+    });
+    if (!lines.length) lines.push({ text: s.com || s.sci, primary: true });
+    return lines;
+  }
+  function atlasNameHtml(s) {
+    return '<div class="atlas-names">' + atlasNameLines(s).map(function (line) {
+      return '<div class="' + (line.primary ? 'atlas-name-primary' : 'atlas-name-secondary') + '">' +
+        adminEsc(line.text) + '</div>';
+    }).join('') + '</div>';
+  }
+  function setModalNames(s) {
+    var lines = atlasNameLines(s);
+    var common = document.getElementById('modalCommon');
+    var alt = document.getElementById('modalAltNames');
+    common.textContent = (lines[0] && lines[0].text) || s.com || s.sci;
+    alt.innerHTML = lines.slice(1, 3).map(function (line) {
+      return '<div>' + adminEsc(line.text) + '</div>';
+    }).join('');
+  }
 
   // Tiny inline icons - monochrome, ink-only, match the page palette.
   var ICON_PLAY = '<svg viewBox="0 0 12 12" fill="currentColor"><path d="M3 2 L10 6 L3 10 Z"/></svg>';
@@ -1173,8 +1205,8 @@
         +   '<div class="img-wrap">'
         +     '<img loading="lazy" decoding="async" src="' + sketchSrc + '" alt="' + s.com + '">'
         +   '</div>'
-        +   '<h3>' + s.com + '</h3>'
-        +   '<div class="sci">' + s.sci + '</div>'
+        +   atlasNameHtml(s)
+        +   '<div class="sci">' + adminEsc(s.sci) + '</div>'
         +   '<div class="spectro-wrap" aria-hidden="true"></div>'
         +   '<div class="actions">'
         +     '<button type="button" class="chip play" data-action="play" aria-label="play recording">'
@@ -1354,6 +1386,14 @@
       })
       .catch(function (e) { console.warn('recent fetch failed', e); });
   }
+  function refreshAtlasLabels(animate) {
+    return fetchJson('./avian/api/atlas-labels.php')
+      .then(function (j) {
+        DATA.atlasLabels = j;
+        renderAtlas(animate);
+      })
+      .catch(function (e) { console.warn('atlas labels fetch failed', e); });
+  }
   function refreshAll(animate) {
     var forHours = currentHours;
     return Promise.all([
@@ -1362,6 +1402,9 @@
       fetchJson('./avian/api/birdnet-api.php?action=timeseries&days=30').catch(function () { return null; }),
       fetchJson('./avian/api/birdnet-api.php?action=firstseen&limit=10').catch(function () { return null; }),
       fetchJson('./avian/api/birdnet-api.php?action=recent&hours=' + forHours).catch(function () { return null; }),
+      (DATA.atlasLabels
+        ? Promise.resolve(DATA.atlasLabels)
+        : fetchJson('./avian/api/atlas-labels.php').catch(function () { return null; })),
     ]).then(function (parts) {
       DATA.stats = parts[0];
       DATA.lifelist = parts[1];
@@ -1370,6 +1413,7 @@
       // Only accept the recent slice if the window hasn't changed
       // since this poll started - otherwise keep what's there.
       if (forHours === currentHours && parts[4]) DATA.recent = parts[4];
+      if (parts[5]) DATA.atlasLabels = parts[5];
       recomputeDerived();
       renderTimeIndependent(animate);
       renderCollageFromData(animate);
@@ -1699,6 +1743,7 @@
       .then(function (cfg) {
         var v = cfg.values || {};
         var preserve = cfg.preserve;
+        var langOpts = cfg.language_options || { none: 'None', en: 'English' };
         var html = ''
           + settingsToggle('preserve', 'Preserve all recordings', "don't auto-delete", preserve)
           + settingsSlider('CONFIDENCE',  'Confidence threshold', 'min score to log a detection', v.CONFIDENCE,  0.1, 0.95, 0.05, 2)
@@ -1708,6 +1753,9 @@
               { v: 'keep',  label: 'keep' },
               { v: 'purge', label: 'purge' },
             ])
+          + settingsSelect('ATLAS_LANGUAGE_1', 'Atlas language 1', '', v.ATLAS_LANGUAGE_1, langOpts)
+          + settingsSelect('ATLAS_LANGUAGE_2', 'Atlas language 2', '', v.ATLAS_LANGUAGE_2, langOpts)
+          + settingsSelect('ATLAS_LANGUAGE_3', 'Atlas language 3', '', v.ATLAS_LANGUAGE_3, langOpts)
           + '<div class="menu-save-row">'
           + '  <span class="save-state" id="saveState"></span>'
           + '  <button type="button" id="saveBtn" disabled>save</button>'
@@ -1761,6 +1809,19 @@
       + '  <div class="seg" data-key="' + key + '">' + btns + '</div>'
       + '</div>';
   }
+  function settingsSelect(key, label, hint, val, opts) {
+    var selected = val == null ? '' : String(val);
+    var options = Object.keys(opts || {}).map(function (v) {
+      return '<option value="' + adminEsc(v) + '"' + (v === selected ? ' selected' : '') + '>' + adminEsc(opts[v]) + '</option>';
+    }).join('');
+    return ''
+      + '<div class="menu-row">'
+      + '  <div><span class="label">' + label + '</span>'
+      +     (hint ? '<span class="hint">' + hint + '</span>' : '')
+      + '  </div>'
+      + '  <select class="settings-select" data-key="' + adminEsc(key) + '">' + options + '</select>'
+      + '</div>';
+  }
   // Client-side theme switcher row. Reuses the .seg look but is tagged
   // data-theme-seg so wireSettingsControls skips it - it applies instantly
   // and is NOT part of the Pi config save flow.
@@ -1804,6 +1865,12 @@
         });
       });
     });
+    scope.querySelectorAll('select[data-key]').forEach(function (sel) {
+      sel.addEventListener('change', function () {
+        pending[sel.dataset.key] = sel.value;
+        setSaveState('change pending');
+      });
+    });
   }
 
   function saveSettings() {
@@ -1820,6 +1887,7 @@
         if (res.ok && res.j.ok) {
           pending = {};
           setSaveState('saved ✓', 'ok');
+          refreshAtlasLabels(false);
           setTimeout(function () { setSaveState(''); }, 1800);
         } else {
           setSaveState('save failed', 'err');
@@ -2031,6 +2099,7 @@
     document.getElementById('modalSci').textContent = sci;
     document.getElementById('modalGenus').textContent = (sci.split(' ')[0] || '-');
     document.getElementById('modalCommon').textContent = '-';
+    document.getElementById('modalAltNames').innerHTML = '';
     document.getElementById('modalAllTime').textContent = '-';
     document.getElementById('modalWindow').textContent = '-';
     // Window stat label tracks the picker; the whole stat is hidden for
@@ -2074,7 +2143,7 @@
         });
     loadSpecies.then(function (j) {
       var s = j.summary || {};
-      document.getElementById('modalCommon').textContent = s.com || sci;
+      setModalNames({ sci: sci, com: s.com || sci });
       document.getElementById('modalAllTime').textContent = (+s.total || 0).toLocaleString();
       var winRow = ((DATA.recent && DATA.recent.species) || []).filter(function (x) { return x.sci === sci; })[0];
       document.getElementById('modalWindow').textContent = (winRow ? +winRow.n : 0).toLocaleString();
@@ -2343,6 +2412,7 @@
       .then(function (cfg) {
         var v = cfg.values || {};
         var preserve = cfg.preserve;
+        var langOpts = cfg.language_options || { none: 'None', en: 'English' };
         adminBody.innerHTML =
           '<div class="admin-settings">'
           + themeRow()
@@ -2354,6 +2424,9 @@
               { v: 'keep',  label: 'keep' },
               { v: 'purge', label: 'purge' },
             ])
+          + settingsSelect('ATLAS_LANGUAGE_1', 'Atlas language 1', '', v.ATLAS_LANGUAGE_1, langOpts)
+          + settingsSelect('ATLAS_LANGUAGE_2', 'Atlas language 2', '', v.ATLAS_LANGUAGE_2, langOpts)
+          + settingsSelect('ATLAS_LANGUAGE_3', 'Atlas language 3', '', v.ATLAS_LANGUAGE_3, langOpts)
           + '<div class="menu-save-row">'
           + '  <span class="save-state" id="saveState"></span>'
           + '  <button type="button" id="saveBtn" disabled>save</button>'

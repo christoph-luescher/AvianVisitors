@@ -29,6 +29,7 @@ if (getenv('AV_REQUIRE_AUTH') === '1' && empty($_SERVER['HTTP_AUTHORIZATION'])) 
 // Path layout: /home/{USER}/BirdNET-Pi/avian/api/config.php
 $BIRDNETPI_DIR = dirname(__DIR__, 2);
 $CONF_PATH     = "$BIRDNETPI_DIR/birdnet.conf";
+$L18N_DIR      = "$BIRDNETPI_DIR/model/l18n";
 
 // Whitelist: { config_key => { type, min?, max?, restart? } }
 $ALLOWED = [
@@ -38,11 +39,64 @@ $ALLOWED = [
     'OVERLAP'            => ['type' => 'float', 'min' => 0.0,  'max' => 2.5,  'restart' => true],
     'MAX_FILES_SPECIES'  => ['type' => 'int',   'min' => 0,    'max' => 100000],
     'FULL_DISK'          => ['type' => 'enum',  'values' => ['purge', 'keep']],
+    'ATLAS_LANGUAGE_1'   => ['type' => 'enum',  'values' => []],
+    'ATLAS_LANGUAGE_2'   => ['type' => 'enum',  'values' => []],
+    'ATLAS_LANGUAGE_3'   => ['type' => 'enum',  'values' => []],
     'PURGE_THRESHOLD'    => ['type' => 'int',   'min' => 50,   'max' => 99],
     'LATITUDE'           => ['type' => 'float', 'min' => -90,  'max' => 90, 'restart' => true],
     'LONGITUDE'          => ['type' => 'float', 'min' => -180, 'max' => 180, 'restart' => true],
     'SITE_NAME'          => ['type' => 'string', 'maxlen' => 60],
 ];
+
+function birdnet_language_options(string $dir): array {
+    $names = [
+        'af' => 'Afrikaans',
+        'ar' => 'Arabic',
+        'bg' => 'Bulgarian',
+        'ca' => 'Catalan',
+        'cs' => 'Czech',
+        'da' => 'Danish',
+        'de' => 'German',
+        'en' => 'English',
+        'es' => 'Spanish',
+        'et' => 'Estonian',
+        'fi' => 'Finnish',
+        'fr' => 'French',
+        'hr' => 'Croatian',
+        'hu' => 'Hungarian',
+        'id' => 'Indonesian',
+        'is' => 'Icelandic',
+        'it' => 'Italian',
+        'ja' => 'Japanese',
+        'ko' => 'Korean',
+        'lt' => 'Lithuanian',
+        'lv' => 'Latvian',
+        'nl' => 'Dutch',
+        'no' => 'Norwegian',
+        'pl' => 'Polish',
+        'pt' => 'Portuguese',
+        'ro' => 'Romanian',
+        'ru' => 'Russian',
+        'sk' => 'Slovak',
+        'sl' => 'Slovenian',
+        'sr' => 'Serbian',
+        'sv' => 'Swedish',
+        'th' => 'Thai',
+        'tr' => 'Turkish',
+        'uk' => 'Ukrainian',
+        'vi' => 'Vietnamese',
+        'zh_CN' => 'Chinese (Simplified)',
+        'zh_TW' => 'Chinese (Traditional)',
+    ];
+    $options = [];
+    foreach (glob($dir . '/labels_*.json') ?: [] as $file) {
+        $code = preg_replace('/^labels_|\.json$/', '', basename($file));
+        if ($code === '') continue;
+        $options[$code] = $names[$code] ?? $code;
+    }
+    ksort($options, SORT_NATURAL | SORT_FLAG_CASE);
+    return $options;
+}
 
 function read_conf(string $path): array {
     if (!is_readable($path)) return [];
@@ -102,6 +156,12 @@ function safe_string_value(string $v): bool {
     return (bool)preg_match("/^[A-Za-z0-9 _.,'-]*$/u", $v);
 }
 
+$LANGUAGE_OPTIONS = birdnet_language_options($L18N_DIR);
+$LANGUAGE_VALUES = array_keys($LANGUAGE_OPTIONS);
+foreach (['ATLAS_LANGUAGE_1', 'ATLAS_LANGUAGE_2', 'ATLAS_LANGUAGE_3'] as $k) {
+    $ALLOWED[$k]['values'] = array_merge(['none'], $LANGUAGE_VALUES);
+}
+
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 if ($method === 'GET') {
@@ -114,9 +174,16 @@ if ($method === 'GET') {
         elseif ($spec['type'] === 'int') $v = (int)$v;
         $out[$k] = $v;
     }
+    $defaultLanguage = in_array(($conf['DATABASE_LANG'] ?? 'en'), $LANGUAGE_VALUES, true)
+        ? $conf['DATABASE_LANG']
+        : 'en';
+    $out['ATLAS_LANGUAGE_1'] = $out['ATLAS_LANGUAGE_1'] ?? $defaultLanguage;
+    $out['ATLAS_LANGUAGE_2'] = $out['ATLAS_LANGUAGE_2'] ?? 'none';
+    $out['ATLAS_LANGUAGE_3'] = $out['ATLAS_LANGUAGE_3'] ?? 'none';
     echo json_encode([
         'values'   => $out,
         'meta'     => $ALLOWED,
+        'language_options' => array_merge(['none' => 'None'], $LANGUAGE_OPTIONS),
         'preserve' => (int)($conf['MAX_FILES_SPECIES'] ?? 0) >= 10000,
     ]);
     exit;

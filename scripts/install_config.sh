@@ -253,6 +253,12 @@ AUDIOFMT=mp3
 ## DATABASE_LANG is the language used for the bird species database
 DATABASE_LANG=en
 
+## Atlas languages are used by AvianVisitors for translated species names.
+## Use BirdNET species-name language codes, or none.
+ATLAS_LANGUAGE_1=en
+ATLAS_LANGUAGE_2=none
+ATLAS_LANGUAGE_3=none
+
 ## HEARTBEAT_URL is a location to ping every time some analysis is done
 ## no information is sent to the the URL, its a heart beat to show that the
 ## analysis is continuing
