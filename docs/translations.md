@@ -2,7 +2,7 @@
 | -------- | ------- | ------ |
 | Afrikaans | 801 | 11.3% |
 | Arabic | 2087 | 29.6% |
-| Bulgarian | 654 | 9.3% |
+| Bulgarian | 886 | 12.6% |
 | Catalan | 6773 | 96.0% |
 | Chinese (simplified) | 6210 | 88.0% |
 | Chinese (traditional) | 833 | 11.8% |
