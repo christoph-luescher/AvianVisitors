@@ -1,4 +1,8 @@
 (function () {
+  var STATIC_EXPORT = window.AVIAN_STATIC || null;
+  var IS_STATIC = !!STATIC_EXPORT;
+  if (IS_STATIC) document.body.classList.add('av-static');
+
   var PLACEHOLDER = [{"sci":"Calypte anna","com":"Anna's Hummingbird","featured":true},{"sci":"Passer domesticus","com":"House Sparrow"},{"sci":"Haemorhous mexicanus","com":"House Finch"},{"sci":"Turdus migratorius","com":"American Robin"},{"sci":"Zenaida macroura","com":"Mourning Dove"},{"sci":"Spinus psaltria","com":"Lesser Goldfinch"},{"sci":"Zonotrichia leucophrys","com":"White-crowned Sparrow"},{"sci":"Aphelocoma californica","com":"California Scrub-Jay"},{"sci":"Mimus polyglottos","com":"Northern Mockingbird"},{"sci":"Sayornis nigricans","com":"Black Phoebe"},{"sci":"Larus occidentalis","com":"Western Gull"},{"sci":"Corvus brachyrhynchos","com":"American Crow"}];
   // Bumped whenever the offline sketch build changes, so the browser
   // doesn't keep a stale cache after we regenerate the sketches.
@@ -56,7 +60,7 @@
   // Each view's title text. The shared static-head shows one of these
   // based on the current view; identical adjacent values mean the title
   // stays put with no fade (collage and stats both say Heard Recently).
-  var VIEW_TITLES = ['Heard Recently', 'Heard Recently', 'Avian Visitors'];
+  var VIEW_TITLES = IS_STATIC ? ['Heard Recently', 'Avian Visitors'] : ['Heard Recently', 'Heard Recently', 'Avian Visitors'];
   var staticHead = document.querySelector('.static-head');
   var staticTitle = document.getElementById('staticTitle');
   function setTitleForView(i) {
@@ -84,8 +88,9 @@
   var SWITCH_LEAD = SLIDE_MS - 100;   // atlas
   var STATS_LEAD = SLIDE_MS - 200;    // stats - begin a touch sooner
   var currentView = 0;                // collage shows first (no go() needed)
+  function atlasViewIndex() { return IS_STATIC ? 1 : 2; }
   function go(i) {
-    i = Math.max(0, Math.min(2, i));
+    i = Math.max(0, Math.min(IS_STATIC ? 1 : 2, i));
     // Only a genuine view *switch* replays the entrance. go() also fires when
     // a card is expanded (it sets the #sci= hash, which routes through go(2))
     // while already on the atlas - that must not retrigger the load-in.
@@ -99,8 +104,8 @@
     // Replay the view's entrance animation on switch (collage bloom,
     // stats left-to-right, atlas row-by-row).
     if (i === 0) playCollageEntrance();
-    else if (i === 1) playStatsEntrance(STATS_LEAD);
-    else if (i === 2) playAtlasEntrance(SWITCH_LEAD);
+    else if (!IS_STATIC && i === 1) playStatsEntrance(STATS_LEAD);
+    else if (i === atlasViewIndex()) playAtlasEntrance(SWITCH_LEAD);
   }
   btns.forEach(function (b) { b.addEventListener('click', function () { go(+b.dataset.i); }); });
 
@@ -146,7 +151,8 @@
   }
   applyTheme(readLS('bird:theme', 'light'));
   var winBtns = [].slice.call(winPick.querySelectorAll('button'));
-  var currentHours = +readLS('bird:window', '24') || 24;
+  var WINDOW_KEY = IS_STATIC ? 'bird:staticWindow' : 'bird:window';
+  var currentHours = +readLS(WINDOW_KEY, IS_STATIC ? '1000000' : '24') || 24;
   winBtns.forEach(function (b) {
     b.setAttribute('aria-current', (+b.dataset.h === currentHours) ? 'true' : 'false');
   });
@@ -154,7 +160,7 @@
     b.addEventListener('click', function () {
       winBtns.forEach(function (x) { x.setAttribute('aria-current', x === b ? 'true' : 'false'); });
       currentHours = +b.dataset.h;
-      writeLS('bird:window', String(currentHours));
+      writeLS(WINDOW_KEY, String(currentHours));
       syncPill(winPick);
       // Actual data refresh is wired below via refreshRecent().
     });
@@ -279,6 +285,39 @@
 
   function slugify(sci) {
     return sci.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  }
+  function staticRecentKey(hours) {
+    return (+hours >= 1000000) ? 'all' : String(+hours || 24);
+  }
+  function recentDataUrl(hours) {
+    return IS_STATIC
+      ? './data/recent-' + staticRecentKey(hours) + '.json'
+      : './avian/api/birdnet-api.php?action=recent&hours=' + hours;
+  }
+  function speciesDataUrl(sci) {
+    return IS_STATIC
+      ? './data/species/' + slugify(sci) + '.json'
+      : './avian/api/birdnet-api.php?action=species&sci=' + encodeURIComponent(sci);
+  }
+  function wikiDataUrl(sci) {
+    return IS_STATIC
+      ? './data/wiki/' + slugify(sci) + '.json'
+      : './avian/api/wiki.php?sci=' + encodeURIComponent(sci);
+  }
+  function sketchSrc(sci, pose) {
+    var n = +pose || 1;
+    if (IS_STATIC) {
+      return './avian/assets/illustrations/' + slugify(sci) + (n > 1 ? '-' + n : '') + '.png?v=' + SKETCH_VERSION;
+    }
+    // Look up the common name from the lifelist so the worker's JIT
+    // Gemini prompt is right for a never-pre-rendered species.
+    var sp = ((DATA.lifelist && DATA.lifelist.species) || [])
+      .find(function (s) { return s.sci === sci; });
+    var com = sp ? (sp.com || '') : '';
+    var base = './avian/api/cutout.php?sci=' + encodeURIComponent(sci) +
+      (com ? '&com=' + encodeURIComponent(com) : '') +
+      '&v=' + SKETCH_VERSION;
+    return n > 1 ? base + '&pose=' + n : base;
   }
   function aspect(sci) {
     var d = DIMS[slugify(sci)];
@@ -539,10 +578,12 @@
       // com flows through so the worker's JIT Gemini job uses the right
       // common name in its prompt for a freshly-detected species.
       // &v=IMG_VERSION busts CF edge cache when we re-render any species.
-      var img = './avian/api/cutout.php?sci=' + encodeURIComponent(s.sci) +
+      var img = IS_STATIC ? sketchSrc(s.sci, r.pose) : (
+        './avian/api/cutout.php?sci=' + encodeURIComponent(s.sci) +
         (s.com ? '&com=' + encodeURIComponent(s.com) : '') +
         (r.pose === 2 ? '&pose=2' : '') +
-        '&v=' + IMG_VERSION;
+        '&v=' + IMG_VERSION
+      );
       var btn = document.createElement('button');
       btn.className = 'gtile';
       btn.type = 'button';
@@ -748,7 +789,7 @@
     var hit = maskHitTest(ev.clientX, ev.clientY);
     if (!hit) return;
     location.hash = '#sci=' + encodeURIComponent(hit.data.sci);
-    go(2);
+    go(atlasViewIndex());
   });
 
   // Debug hook - call __layout({ slugs, weights, n }) from devtools to
@@ -1187,9 +1228,7 @@
       var win = winBySci[s.sci] || 0;
       var firstMs = Date.parse((s.first_seen || '').replace(' ', 'T'));
       var isLifer = !isAllWindow && !isNaN(firstMs) && firstMs >= windowStartMs;
-      var sketchSrc = './avian/api/cutout.php?sci=' + encodeURIComponent(s.sci) +
-        (s.com ? '&com=' + encodeURIComponent(s.com) : '') +
-        '&v=' + SKETCH_VERSION;
+      var imgSrc = sketchSrc(s.sci, 1);
       var audioSrc = './avian/api/recording.php?sci=' + encodeURIComponent(s.sci);
       // The "all time" window makes the windowed count identical to the
       // all-time count - collapse to a single stat rather than print the
@@ -1199,24 +1238,29 @@
         : '<div><span class="n">' + fmtNK(win) + '</span><span class="lbl-inline">' + windowLabel(currentHours) + '</span></div>'
           + '<div><span class="n">' + fmtNK(total) + '</span><span class="lbl-inline">all time</span></div>';
       return ''
-        + '<article class="bird-card" data-sci="' + s.sci + '" data-audio="' + audioSrc + '">'
+        + '<article class="bird-card" data-sci="' + s.sci + '"' + (IS_STATIC ? '' : ' data-audio="' + audioSrc + '"') + '>'
         +   (isLifer ? '<span class="lifer-badge" title="new to the life list in this window">lifer</span>' : '')
         +   '<div class="stat">' + statRows + '</div>'
         +   '<div class="img-wrap">'
-        +     '<img loading="lazy" decoding="async" src="' + sketchSrc + '" alt="' + s.com + '">'
+        +     '<img loading="lazy" decoding="async" src="' + imgSrc + '" alt="' + s.com + '">'
         +   '</div>'
         +   atlasNameHtml(s)
         +   '<div class="sci">' + adminEsc(s.sci) + '</div>'
-        +   '<div class="spectro-wrap" aria-hidden="true"></div>'
+        +   (IS_STATIC ? '' : '<div class="spectro-wrap" aria-hidden="true"></div>')
         +   '<div class="actions">'
-        +     '<button type="button" class="chip play" data-action="play" aria-label="play recording">'
+        +     (IS_STATIC ? '' : '<button type="button" class="chip play" data-action="play" aria-label="play recording">'
         +       ICON_PLAY + '<span>play</span>'
-        +     '</button>'
+        +     '</button>')
         +     '<a class="chip ext" href="' + wikiUrl(s.sci) + '" target="_blank" rel="noopener" aria-label="Wikipedia">wiki</a>'
         +     '<a class="chip ext" href="' + ebirdUrl(s.sci) + '" target="_blank" rel="noopener" aria-label="eBird">ebird</a>'
         +   '</div>'
         + '</article>';
     }).join('');
+
+    if (IS_STATIC) {
+      if (animate) playAtlasEntrance();
+      return;
+    }
 
     // Wire audio playback + spectrogram load.
     // - Only one card plays at a time. Clicking play on a different card
@@ -1379,15 +1423,21 @@
     // lands later - we discard the stale response so the collage
     // never reverts to a different window.
     var forHours = currentHours;
-    return fetchJson('./avian/api/birdnet-api.php?action=recent&hours=' + forHours)
+    return fetchJson(recentDataUrl(forHours))
       .then(function (j) {
         if (forHours !== currentHours) return; // window changed mid-flight
-        DATA.recent = j; renderWindowDependent(animate);
+        DATA.recent = j;
+        if (IS_STATIC) {
+          renderAtlas(animate);
+          renderCollageFromData(animate);
+        } else {
+          renderWindowDependent(animate);
+        }
       })
       .catch(function (e) { console.warn('recent fetch failed', e); });
   }
   function refreshAtlasLabels(animate) {
-    return fetchJson('./avian/api/atlas-labels.php')
+    return fetchJson(IS_STATIC ? './data/atlas-labels.json' : './avian/api/atlas-labels.php')
       .then(function (j) {
         DATA.atlasLabels = j;
         renderAtlas(animate);
@@ -1396,12 +1446,31 @@
   }
   function refreshAll(animate) {
     var forHours = currentHours;
+    if (IS_STATIC) {
+      return Promise.all([
+        fetchJson('./data/lifelist.json').catch(function () { return null; }),
+        fetchJson(recentDataUrl(forHours)).catch(function () { return null; }),
+        (DATA.atlasLabels
+          ? Promise.resolve(DATA.atlasLabels)
+          : fetchJson('./data/atlas-labels.json').catch(function () { return null; })),
+      ]).then(function (parts) {
+        DATA.stats = null;
+        DATA.lifelist = parts[0];
+        DATA.timeseries = null;
+        DATA.firstseen = null;
+        if (forHours === currentHours && parts[1]) DATA.recent = parts[1];
+        if (parts[2]) DATA.atlasLabels = parts[2];
+        recomputeDerived();
+        renderAtlas(animate);
+        renderCollageFromData(animate);
+      });
+    }
     return Promise.all([
       fetchJson('./avian/api/birdnet-api.php?action=stats').catch(function () { return null; }),
       fetchJson('./avian/api/birdnet-api.php?action=lifelist').catch(function () { return null; }),
       fetchJson('./avian/api/birdnet-api.php?action=timeseries&days=30').catch(function () { return null; }),
       fetchJson('./avian/api/birdnet-api.php?action=firstseen&limit=10').catch(function () { return null; }),
-      fetchJson('./avian/api/birdnet-api.php?action=recent&hours=' + forHours).catch(function () { return null; }),
+      fetchJson(recentDataUrl(forHours)).catch(function () { return null; }),
       (DATA.atlasLabels
         ? Promise.resolve(DATA.atlasLabels)
         : fetchJson('./avian/api/atlas-labels.php').catch(function () { return null; })),
@@ -1440,6 +1509,7 @@
   var POLL_MS = 30 * 1000;
   var pollTimer = null;
   function startPolling() {
+    if (IS_STATIC) return;
     stopPolling();
     pollTimer = setInterval(function () {
       if (document.hidden) return;
@@ -1468,9 +1538,11 @@
   function openDd()  { dd.classList.add('open'); dd.setAttribute('aria-hidden','false'); setTimeout(function () { document.getElementById('lockPass').focus(); }, 100); }
   function closeDd() { dd.classList.remove('open'); dd.setAttribute('aria-hidden','true'); }
   function toggleDd(){ dd.classList.contains('open') ? closeDd() : openDd(); }
-  menuBtn.addEventListener('click', function (e) { e.stopPropagation(); toggleDd(); });
-  document.addEventListener('click', function (e) { if (!dd.contains(e.target) && e.target !== menuBtn) closeDd(); });
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeDd(); });
+  if (!IS_STATIC) {
+    menuBtn.addEventListener('click', function (e) { e.stopPropagation(); toggleDd(); });
+    document.addEventListener('click', function (e) { if (!dd.contains(e.target) && e.target !== menuBtn) closeDd(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeDd(); });
+  }
 
   // Probe menu.php with no Authorization header. On a LAN deploy
   // (AV_REQUIRE_AUTH=0) it returns 200 immediately so the drawer
@@ -1485,9 +1557,9 @@
       }
     }).catch(function () {});
   }
-  tryAutoUnlock();
+  if (!IS_STATIC) tryAutoUnlock();
 
-  document.getElementById('unlockForm').addEventListener('submit', function (e) {
+  if (!IS_STATIC) document.getElementById('unlockForm').addEventListener('submit', function (e) {
     e.preventDefault();
     // BirdNET-Pi's upstream Caddyfile basicauth user is `birdnet`.
     // If your install changed it (custom Caddyfile), set window.AV_AUTH_USER
@@ -2029,18 +2101,6 @@
     }
   }
 
-  function sketchSrc(sci, pose) {
-    // Look up the common name from the lifelist so the worker's JIT
-    // Gemini prompt is right for a never-pre-rendered species.
-    var sp = ((DATA.lifelist && DATA.lifelist.species) || [])
-      .find(function (s) { return s.sci === sci; });
-    var com = sp ? (sp.com || '') : '';
-    var base = './avian/api/cutout.php?sci=' + encodeURIComponent(sci) +
-      (com ? '&com=' + encodeURIComponent(com) : '') +
-      '&v=' + SKETCH_VERSION;
-    var n = +pose || 1;
-    return n > 1 ? base + '&pose=' + n : base;
-  }
   function openDetailModal(sci) {
     if (!sci) return;
     var modal = document.getElementById('detail-modal');
@@ -2116,8 +2176,10 @@
     document.getElementById('modalRarity').classList.remove('rare');
     document.getElementById('modalDesc').textContent = 'Loading description...';
     document.getElementById('modalDesc').classList.add('placeholder');
-    document.getElementById('modalRecordings').innerHTML = '<li class="rec-empty">Loading recordings...</li>';
-    document.getElementById('modalRecCount').textContent = '';
+    if (!IS_STATIC) {
+      document.getElementById('modalRecordings').innerHTML = '<li class="rec-empty">Loading recordings...</li>';
+      document.getElementById('modalRecCount').textContent = '';
+    }
     document.getElementById('modalWiki').href = wikiUrl(sci);
     document.getElementById('modalEbird').href = ebirdUrl(sci);
     // FLIP-style morph: scale + translate the modal-card from the
@@ -2137,7 +2199,7 @@
     // Species detail (lifelist row + every detection).
     var loadSpecies = SPECIES_CACHE[sci]
       ? Promise.resolve(SPECIES_CACHE[sci])
-      : fetchJson('./avian/api/birdnet-api.php?action=species&sci=' + encodeURIComponent(sci)).then(function (j) {
+      : fetchJson(speciesDataUrl(sci)).then(function (j) {
           SPECIES_CACHE[sci] = j;
           return j;
         });
@@ -2152,31 +2214,33 @@
       var rarEl = document.getElementById('modalRarity');
       rarEl.textContent = rar;
       if (rar === 'rare') rarEl.classList.add('rare');
-      var dets = j.detections || [];
-      document.getElementById('modalRecCount').textContent = dets.length + ' captured';
-      document.getElementById('modalRecordings').innerHTML = dets.length
-        ? dets.map(function (d) {
-            return '<li class="rec-row" data-file="' + (d.file || '') + '" data-date="' + (d.d || '') + '">'
-              + '<button class="play" type="button" aria-label="play">' + ICON_PLAY + '</button>'
-              + '<span class="when">' + fmtRecTime(d.d, d.t) + '<small>' + fmtDateLine(d.d, d.t) + '</small></span>'
-              + '<span class="conf">' + ((+d.conf || 0) * 100).toFixed(0) + '%</span>'
-              + '<div class="rec-spectro" aria-hidden="true">'
-              +   '<div class="rec-spectro-loading">loading spectrogram...</div>'
-              +   '<div class="rec-spectro-played"></div>'
-              +   '<div class="rec-spectro-cursor"></div>'
-              +   '<div class="rec-spectro-scrub" role="slider" aria-label="scrub" tabindex="0"></div>'
-              + '</div>'
-              + '</li>';
-          }).join('')
-        : '<li class="rec-empty">No recordings yet.</li>';
+      if (!IS_STATIC) {
+        var dets = j.detections || [];
+        document.getElementById('modalRecCount').textContent = dets.length + ' captured';
+        document.getElementById('modalRecordings').innerHTML = dets.length
+          ? dets.map(function (d) {
+              return '<li class="rec-row" data-file="' + (d.file || '') + '" data-date="' + (d.d || '') + '">'
+                + '<button class="play" type="button" aria-label="play">' + ICON_PLAY + '</button>'
+                + '<span class="when">' + fmtRecTime(d.d, d.t) + '<small>' + fmtDateLine(d.d, d.t) + '</small></span>'
+                + '<span class="conf">' + ((+d.conf || 0) * 100).toFixed(0) + '%</span>'
+                + '<div class="rec-spectro" aria-hidden="true">'
+                +   '<div class="rec-spectro-loading">loading spectrogram...</div>'
+                +   '<div class="rec-spectro-played"></div>'
+                +   '<div class="rec-spectro-cursor"></div>'
+                +   '<div class="rec-spectro-scrub" role="slider" aria-label="scrub" tabindex="0"></div>'
+                + '</div>'
+                + '</li>';
+            }).join('')
+          : '<li class="rec-empty">No recordings yet.</li>';
+      }
     }).catch(function () {
-      document.getElementById('modalRecordings').innerHTML = '<li class="rec-empty">Failed to load recordings.</li>';
+      if (!IS_STATIC) document.getElementById('modalRecordings').innerHTML = '<li class="rec-empty">Failed to load recordings.</li>';
     });
 
     // Wikipedia summary (description + genus / family).
     var loadWiki = WIKI_CACHE[sci]
       ? Promise.resolve(WIKI_CACHE[sci])
-      : fetchJson('./avian/api/wiki.php?sci=' + encodeURIComponent(sci)).then(function (j) {
+      : fetchJson(wikiDataUrl(sci)).then(function (j) {
           WIKI_CACHE[sci] = j; return j;
         });
     loadWiki.then(function (j) {
@@ -2689,7 +2753,7 @@
 
   // Initial load: if URL has a sci hash, jump to atlas, highlight, and
   // open the modal.
-  if (readHash()) { go(2); highlightAtlas(readHash()); openDetailModal(readHash()); }
+  if (readHash()) { go(atlasViewIndex()); highlightAtlas(readHash()); openDetailModal(readHash()); }
   // Admin overlay routing: #admin=system|logs|tools opens the admin
   // screen with that sub-tab. Clearing the hash closes it.
   function readAdminHash() {
@@ -2703,14 +2767,14 @@
   function syncRouter() {
     window.__lastHashchange = Date.now();
     var sci = readHash();
-    var adm = readAdminHash();
+    var adm = IS_STATIC ? null : readAdminHash();
     if (location.hash === '#about') openAbout(); else closeAbout();
     if (adm) { openAdmin(adm); return; }
     closeAdmin();
-    if (sci) { go(2); highlightAtlas(sci); openDetailModal(sci); }
+    if (sci) { go(atlasViewIndex()); highlightAtlas(sci); openDetailModal(sci); }
     else     { highlightAtlas(null); closeDetailModal(); }
   }
-  if (readAdminHash()) openAdmin(readAdminHash());
+  if (!IS_STATIC && readAdminHash()) openAdmin(readAdminHash());
   if (location.hash === '#about') openAbout();
   window.addEventListener('hashchange', syncRouter);
 
@@ -3116,7 +3180,7 @@
       location.hash = '#sci=' + encodeURIComponent(sci);
     } else {
       // Same hash -> still re-highlight (the user clicked it again).
-      go(2); highlightAtlas(sci);
+      go(atlasViewIndex()); highlightAtlas(sci);
     }
   }
   document.addEventListener('click', function (ev) {

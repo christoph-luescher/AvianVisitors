@@ -59,3 +59,5 @@ avian/assets/references/
 avian/assets/_legacy/
 # PHP dev-server router for local frontend previews
 local-router.php
+# Static export output
+avian-static/

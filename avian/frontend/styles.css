@@ -93,6 +93,12 @@
     transition: transform 480ms cubic-bezier(.7,.05,.2,1);
   }
   .view  { flex: 0 0 100%; height: 100%; overflow: auto; padding: 8px 56px 132px; position: relative; }
+  body.av-static #v1,
+  body.av-static .menu-btn,
+  body.av-static #menu-dd,
+  body.av-static .modal-recordings {
+    display: none !important;
+  }
   /* Collage and stats views both fit the viewport (no scroll). Atlas
      keeps normal scroll. */
   .view#v0, .view#v1 { overflow: hidden; padding: 8px 32px 88px; }
